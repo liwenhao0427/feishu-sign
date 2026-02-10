@@ -1,6 +1,11 @@
 # 实现计划
 
-- [ ] 1. 项目初始化和基础配置
+- [x] 1. 项目初始化和基础配置
+
+
+
+
+
   - 使用 React + TypeScript 模板创建项目
   - 安装必要依赖：@lark-base-open/js-sdk、react-signature-canvas
   - 配置 Vite 构建工具（base: './'）
