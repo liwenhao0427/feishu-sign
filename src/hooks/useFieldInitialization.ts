@@ -1,76 +1,71 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { bitable, FieldType } from '@lark-base-open/js-sdk';
 
-const URL_FIELD_NAME = '签字确认链接';
 const ATTACHMENT_FIELD_NAME = '签字图片';
 
 export interface FieldInitResult {
-  urlFieldId: string | null;
   attachmentFieldId: string | null;
   isInitialized: boolean;
   error: string | null;
-  /** 重试初始化 */
   retry: () => void;
 }
 
-/**
- * 检查字段是否存在，不存在则自动创建
- * 需求: 1.1, 1.2, 1.3, 1.4, 1.5
- */
 export function useFieldInitialization() {
   const [result, setResult] = useState<Omit<FieldInitResult, 'retry'>>({
-    urlFieldId: null,
     attachmentFieldId: null,
     isInitialized: false,
     error: null,
   });
+  const retryCount = useRef(0);
 
   const initialize = useCallback(async () => {
+    setResult((prev) => ({ ...prev, error: null }));
+
     try {
       const table = await bitable.base.getActiveTable();
       const fieldMetaList = await table.getFieldMetaList();
 
-      // 需求 1.1: 检查"签字确认链接"字段是否存在
-      const urlFieldMeta = fieldMetaList.find(
-        (f) => f.name === URL_FIELD_NAME && f.type === FieldType.Url
-      );
-
-      // 需求 1.3: 检查"签字图片"字段是否存在
-      const attachmentFieldMeta = fieldMetaList.find(
+      // 先按名称查找（不限类型），避免 "field name repeated" 错误
+      let attachmentFieldMeta = fieldMetaList.find(
         (f) => f.name === ATTACHMENT_FIELD_NAME && f.type === FieldType.Attachment
       );
 
-      // 需求 1.2: 自动创建URL字段
-      let urlFieldId = urlFieldMeta?.id ?? null;
-      if (!urlFieldId) {
-        urlFieldId = await table.addField({
-          type: FieldType.Url,
-          name: URL_FIELD_NAME,
-        });
-      }
-
-      // 需求 1.4: 自动创建附件字段
       let attachmentFieldId = attachmentFieldMeta?.id ?? null;
+
       if (!attachmentFieldId) {
-        attachmentFieldId = await table.addField({
-          type: FieldType.Attachment,
-          name: ATTACHMENT_FIELD_NAME,
-        });
+        // 检查是否有同名但不同类型的字段
+        const sameName = fieldMetaList.find((f) => f.name === ATTACHMENT_FIELD_NAME);
+        if (sameName) {
+          // 同名字段已存在但类型不对，用带后缀的名称创建
+          attachmentFieldId = await table.addField({
+            type: FieldType.Attachment,
+            name: `${ATTACHMENT_FIELD_NAME}_附件`,
+          });
+        } else {
+          attachmentFieldId = await table.addField({
+            type: FieldType.Attachment,
+            name: ATTACHMENT_FIELD_NAME,
+          });
+        }
       }
 
-      // 需求 1.5: 初始化完成
-      setResult({
-        urlFieldId,
-        attachmentFieldId,
-        isInitialized: true,
-        error: null,
-      });
+      retryCount.current = 0;
+      setResult({ attachmentFieldId, isInitialized: true, error: null });
     } catch (e) {
+      const msg = e instanceof Error ? e.message : '字段创建失败，请检查权限';
+
+      // 如果是字段重复错误，自动重试（最多 2 次），重新读取字段列表
+      if (msg.includes('repeated') && retryCount.current < 2) {
+        retryCount.current++;
+        // 延迟 500ms 后重试，等待字段列表刷新
+        setTimeout(() => initialize(), 500);
+        return;
+      }
+
       setResult({
-        urlFieldId: null,
         attachmentFieldId: null,
         isInitialized: false,
-        error: e instanceof Error ? e.message : '字段创建失败，请检查权限',
+        error: msg,
       });
     }
   }, []);
